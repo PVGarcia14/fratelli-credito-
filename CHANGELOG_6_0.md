@@ -1,29 +1,25 @@
-# Changelog — Fratelli B2B Crédito
+# Fratelli B2B Crédito — 6.1.2
 
-## 6.0.4
-- QSA (sócios/administradores) passa a ser extraído automaticamente das fontes públicas que o parser conseguir identificar.
-- Nome e qualificação do sócio/administrador aparecem automaticamente após a análise do CNPJ.
-- Pesquisa judicial automática no Jusbrasil para o CNPJ e para cada sócio/administrador identificado.
-- A interface diferencia: processo encontrado, acesso público indisponível e ausência de resultado verificável.
-- Incluído link direto para consulta no Jusbrasil.
-- Pesquisa manual de nomes continua disponível como complemento.
-- Não são feitas acusações nem conclusões automáticas de que um processo é “prejudicial”; a tela apresenta a evidência para análise.
-- Mantida a lógica de limite e conversão da 6.0.3.
+- Simulador comercial simplificado para operação diária.
+- Sugestão automática de composição baseada no crédito efetivamente aprovado.
+- Otimização por caixas inteiras, sem ultrapassar o limite.
+- Faixa comercial escolhida automaticamente pela quantidade total de unidades.
+- Configuração de produtos e condições movida para área administrativa recolhida.
+- Simulação manual mantida apenas como contingência.
+
+# Fratelli B2B Crédito — 6.1.0
+
+- QSA automático reforçado para múltiplos formatos públicos.
+- Pesquisa judicial Jusbrasil separada em descoberta pública e integração estruturada autorizada.
+- Suporte opcional à API oficial do Jusbrasil via `JUSBRASIL_API_KEY` em Streamlit Secrets ou variável de ambiente.
+- Consulta automática civil, criminal e trabalhista por CNPJ quando a API autorizada estiver configurada.
+- Exibição estruturada de número, tipo, status, fórum, partes e última atualização.
+- Removidos botões que simplesmente redirecionavam o usuário para o Jusbrasil na seção principal.
+- Ausência de API/resultado não é interpretada como ausência de processos.
 
 
-## 6.0.5
-- Resultado da simulação passa a exibir explicitamente CRÉDITO APROVADO ou CRÉDITO NÃO APROVADO AUTOMATICAMENTE.
-- Incluído fluxo de solicitação de aprovação manual para pedidos fora dos parâmetros automáticos.
-- Botão de e-mail com mensagem pré-preenchida para o responsável configurado.
-- Botão de WhatsApp com mensagem pré-preenchida para o responsável configurado.
-- Inclusão de registro da solicitação no módulo de auditoria.
-- Nenhum envio é realizado automaticamente; o usuário confirma o envio no aplicativo escolhido.
-- Mantido o motor de risco, limite, pesquisa pública, QSA, pesquisa judicial e simulador da 6.0.4.
-
-## 6.0.7
-- Corrigida a simulação manual por caixas para calcular imediatamente caixas, unidades, bruto, desconto e líquido.
-- Quantidade inicial de caixas passa a ser 1 para tornar o cálculo visível sem configuração adicional.
-- Exibe preço unitário e valor de uma caixa antes da simulação.
-- O cálculo do pedido é independente da aprovação: mesmo com crédito aprovado igual a zero, o sistema calcula o valor e informa separadamente que não há autorização.
-- Comparação com o crédito efetivamente liberado usa o valor líquido do pedido.
-- Mensagens distintas para preço não configurado, crédito zero, pedido dentro do limite e excesso.
+## 6.1.1
+- Corrigida a simulação financeira para reutilizar exatamente o valor aprovado na decisão de crédito.
+- Removido o recálculo independente da decisão ao alterar o valor simulado.
+- Campo passou a mostrar "Limite aprovado na decisão" e excesso calculado contra esse mesmo valor.
+- Solicitação de aprovação manual continua aparecendo somente quando a simulação excede o limite aprovado.

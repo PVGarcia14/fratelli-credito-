@@ -100,6 +100,89 @@ def decision(score: float, requested: float, financial_available: float, coverag
             "reason":"Não há limite financeiro disponível para o pedido."}
 
 
+
+def suggest_automatic_mix(approved_limit: float, products: List[Dict[str, Any]],
+                         tiers: Optional[List[Dict[str, Any]]] = None,
+                         seed: Optional[int] = None, max_boxes_per_product: int = 60) -> Dict[str, Any]:
+    """Build the best whole-box B2B composition automatically."""
+    from itertools import product as cartesian_product
+    import random
+
+    limit = max(0.0, float(approved_limit or 0))
+    valid = [x for x in (products or [])
+             if float(x.get("unit_price", 0) or 0) > 0
+             and int(x.get("units_per_box", 0) or 0) > 0]
+    if limit <= 0 or not valid:
+        return {"status": "SEM_CREDITO", "items": [], "gross": 0.0,
+                "discount": 0.0, "net": 0.0, "remaining": limit,
+                "units": 0, "discount_pct": 0.0, "tier": None}
+
+    tiers = tiers or []
+    valid = valid[:3]
+    min_discount = min([float(t.get("discount_pct", 0) or 0) for t in tiers] or [0.0])
+    ranges = []
+    for x in valid:
+        box_gross = float(x["unit_price"]) * int(x["units_per_box"])
+        box_floor = box_gross * (1 - min_discount / 100.0)
+        upper = int(limit // box_floor) + 1 if box_floor > 0 else 0
+        ranges.append(range(0, min(max_boxes_per_product, upper) + 1))
+
+    candidates = []
+    for counts in cartesian_product(*ranges):
+        if not any(counts):
+            continue
+        gross = 0.0
+        units = 0
+        for x, boxes in zip(valid, counts):
+            gross += boxes * float(x["unit_price"]) * int(x["units_per_box"])
+            units += boxes * int(x["units_per_box"])
+        discount_pct = discount_for_quantity(units, tiers)
+        net = round(gross * (1 - discount_pct / 100.0), 2)
+        if net <= limit + 1e-9:
+            diversity = sum(1 for b in counts if b > 0)
+            total_boxes = sum(counts)
+            candidates.append((net, diversity, -total_boxes, counts, gross, units, discount_pct))
+
+    if not candidates:
+        return {"status": "SEM_COMBINACAO", "items": [], "gross": 0.0,
+                "discount": 0.0, "net": 0.0, "remaining": limit,
+                "units": 0, "discount_pct": 0.0, "tier": None}
+
+    best_net = max(x[0] for x in candidates)
+    near = [x for x in candidates if x[0] >= best_net - max(1.0, best_net * 0.005)]
+    max_diversity = max(x[1] for x in near)
+    near = [x for x in near if x[1] == max_diversity]
+    chosen = random.Random(seed).choice(near)
+    net, _, _, counts, gross, units, discount_pct = chosen
+
+    items = []
+    for x, boxes in zip(valid, counts):
+        if boxes <= 0:
+            continue
+        box_gross = float(x["unit_price"]) * int(x["units_per_box"])
+        items.append({
+            "name": x["name"], "boxes": int(boxes),
+            "units": int(boxes) * int(x["units_per_box"]),
+            "unit_price": float(x["unit_price"]),
+            "units_per_box": int(x["units_per_box"]),
+            "box_value": round(box_gross, 2),
+            "gross": round(boxes * box_gross, 2),
+        })
+
+    tier_label = None
+    for t in tiers:
+        mn = int(t.get("min_units", 0) or 0); mx = t.get("max_units")
+        if units >= mn and (mx is None or units <= int(mx)):
+            tier_label = t.get("label") or f"{discount_pct:.1f}%"
+            break
+
+    return {
+        "status": "OK", "items": items, "gross": round(gross, 2),
+        "discount": round(gross - net, 2), "net": net,
+        "remaining": round(max(0.0, limit - net), 2),
+        "units": units, "discount_pct": discount_pct, "tier": tier_label,
+    }
+
 def public_confidence(source_count: int, successful_sources: int, conflicts: int, documented_fields: int) -> float:
     if source_count <= 0:
         return 0.0
@@ -122,21 +205,37 @@ def first_match(text: str, patterns: List[str]) -> Optional[str]:
 
 
 def parse_public_page(text: str) -> Dict[str, Any]:
+    """Extract stable company fields from public company pages.
+
+    The location parser deliberately stops at known field labels so page-menu text
+    cannot leak into the municipality value. Age/status are derived later in the UI
+    from the opening date and the cadastral status, respectively.
+    """
+    t = normalize_text(text)
     fields = {
-        "Razão social": first_match(text, [r"Raz[aã]o Social\s*[:|]?\s*([^|]{3,120}?)(?=\s+Nome Fantasia|\s+CNPJ|\s+Data)" ]),
-        "Nome fantasia": first_match(text, [r"Nome Fantasia\s*[:|]?\s*([^|]{2,120}?)(?=\s+Data|\s+CNPJ|\s+Porte)" ]),
-        "Data de abertura": first_match(text, [r"Data da Abertura\s*[:|]?\s*(\d{2}/\d{2}/\d{4})", r"Data de abertura\s*[:|]?\s*(\d{2}/\d{2}/\d{4})"]),
-        "Situação cadastral": first_match(text, [r"Situa[cç][aã]o Cadastral\s*[:|]?\s*([^|]{3,40})(?=\s+Data|\s+Capital|\s+Natureza)"]),
-        "Natureza jurídica": first_match(text, [r"Natureza Jur[ií]dica\s*[:|]?\s*([^|]{5,120}?)(?=\s+Capital|\s+Porte|\s+CNAE)"]),
-        "Capital social": first_match(text, [r"Capital Social\s*[:|]?\s*(R\$\s*[0-9\.\,]+)"]),
-        "Porte": first_match(text, [r"Porte\s*[:|]?\s*([^|]{2,50})(?=\s+Natureza|\s+Capital|\s+CNAE)"]),
-        "CNAE principal": first_match(text, [r"CNAE principal\s*[:|]?\s*([0-9\.\-/]+\s*-\s*[^|]{4,140})", r"Principal\s*[:|]?\s*([0-9\.\-/]+\s*-\s*[^|]{4,140})"]),
-        "Endereço": first_match(text, [r"Logradouro\s*[:|]?\s*([^|]{5,150}?)(?=\s+Bairro|\s+CEP|\s+Munic[ií]pio)"]),
-        "Bairro": first_match(text, [r"Bairro\s*[:|]?\s*([^|]{2,80})(?=\s+CEP|\s+Munic[ií]pio)"]),
-        "Município/UF": first_match(text, [r"Munic[ií]pio\s*[:|]?\s*([^|]{2,100}?)(?=\s+Estado|\s+CNAE)"]),
-        "CEP": first_match(text, [r"CEP\s*[:|]?\s*(\d{5}-\d{3})"]),
-        "Telefone": first_match(text, [r"Telefone\s*[:|]?\s*(\(?\d{2}\)?\s*[0-9\- ]{7,20})"]),
+        "Razão social": first_match(t, [r"Raz[aã]o Social\s*[:|]?\s*([^|]{3,120}?)(?=\s+Nome Fantasia|\s+CNPJ|\s+Data)" ]),
+        "Nome fantasia": first_match(t, [r"Nome Fantasia\s*[:|]?\s*([^|]{2,120}?)(?=\s+Data|\s+CNPJ|\s+Porte)" ]),
+        "Data de abertura": first_match(t, [r"Data da Abertura\s*[:|]?\s*(\d{2}/\d{2}/\d{4})", r"Data de abertura\s*[:|]?\s*(\d{2}/\d{2}/\d{4})", r"In[ií]cio de atividade\s*[:|]?\s*(\d{2}/\d{2}/\d{4})"]),
+        "Situação cadastral": first_match(t, [r"Situa[cç][aã]o Cadastral\s*[:|]?\s*([A-ZÁÀÃÂÉÊÍÓÔÕÚÇ][^|]{2,40}?)(?=\s+Data|\s+Capital|\s+Natureza|\s+Porte)", r"Situa[cç][aã]o\s*[:|]?\s*(ATIVA|INATIVA|SUSPENSA|INAPTA|BAIXADA)"]),
+        "Natureza jurídica": first_match(t, [r"Natureza Jur[ií]dica\s*[:|]?\s*([^|]{5,120}?)(?=\s+Capital|\s+Porte|\s+CNAE)"]),
+        "Capital social": first_match(t, [r"Capital Social\s*[:|]?\s*(R\$\s*[0-9\.\,]+)"]),
+        "Porte": first_match(t, [r"Porte\s*[:|]?\s*([^|]{2,50})(?=\s+Natureza|\s+Capital|\s+CNAE)", r"Enquadramento de Porte\s*[:|]?\s*([^|]{2,50})"]),
+        "CNAE principal": first_match(t, [r"CNAE principal\s*[:|]?\s*([0-9\.\-/]+\s*\-\s*[^|]{4,140})", r"Principal\s*[:|]?\s*([0-9\.\-/]+\s*\-\s*[^|]{4,140})"]),
+        "Endereço": first_match(t, [r"Logradouro\s*[:|]?\s*([^|]{5,150}?)(?=\s+Bairro|\s+CEP|\s+Munic[ií]pio)", r"Endere[cç]o\s*[:|]?\s*([^|]{5,150}?)(?=\s+Bairro|\s+CEP|\s+Munic[ií]pio)"]),
+        "Bairro": first_match(t, [r"Bairro\s*[:|]?\s*([^|]{2,80})(?=\s+CEP|\s+Munic[ií]pio)"]),
+        "Município/UF": first_match(t, [r"Munic[ií]pio\s*/?\s*UF\s*[:|]?\s*([A-Za-zÀ-ÿ'’\- ]{2,80})", r"Munic[ií]pio\s*[:|]?\s*([A-Za-zÀ-ÿ'’\- ]{2,80}?)(?=\s+Estado\b|\s+CNAE\b|\s+CEP\b)", r"Munic[ií]pio\s*[:|]?\s*([A-Za-zÀ-ÿ'’\- ]{2,80},\s*[A-Z]{2})"]),
+        "CEP": first_match(t, [r"CEP\s*[:|]?\s*(\d{5}-\d{3})"]),
+        "Telefone": first_match(t, [r"Telefone\s*[:|]?\s*(\(?\d{2}\)?\s*[0-9\- ]{7,20})"]),
     }
+    # Guard against navigation/UI text accidentally captured as municipality.
+    loc = fields.get("Município/UF")
+    if loc:
+        loc = normalize_text(loc)
+        bad_tokens = ("entrar", "minha conta", "sair", "assistente", "home", "empresas", "dados de")
+        if any(tok in loc.lower() for tok in bad_tokens) or len(loc) > 60:
+            fields["Município/UF"] = None
+        else:
+            fields["Município/UF"] = loc
     return {k:v for k,v in fields.items() if v}
 
 
