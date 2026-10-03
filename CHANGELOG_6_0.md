@@ -10,3 +10,8 @@
 - Histórico e auditoria persistidos em SQLite.
 - Interface com logo Fratelli e sem número de versão no nome visual.
 - Produto e unidades mantidos genéricos.
+
+## Hotfix 6.0.1 — Streamlit import compatibility
+- Corrigido o import de `engine` em `public_research.py` para funcionar quando o Streamlit executa `app.py` como módulo principal.
+- Mantido fallback relativo para execução como pacote.
+- Removidos caches de teste e arquivos temporários do pacote de publicação.

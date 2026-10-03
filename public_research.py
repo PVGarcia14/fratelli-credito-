@@ -4,7 +4,10 @@ from urllib.parse import quote
 from typing import Dict, Any, List
 import requests
 from bs4 import BeautifulSoup
-from .engine import clean_cnpj, parse_public_page
+try:
+    from engine import clean_cnpj, parse_public_page
+except ImportError:
+    from .engine import clean_cnpj, parse_public_page
 
 UA = "Mozilla/5.0 (compatible; Fratelli-B2B-Credit/6.0; +public-web-research)"
 
