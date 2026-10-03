@@ -2,6 +2,7 @@ from __future__ import annotations
 import base64
 import json
 import sqlite3
+import random
 from datetime import datetime
 from pathlib import Path
 import pandas as pd
@@ -17,7 +18,20 @@ APP_DIR=Path(__file__).parent
 DB=APP_DIR/"fratelli.db"
 LOGO=APP_DIR/"assets"/"fratelli_logo.png"
 
-st.set_page_config(page_title="Fratelli B2B Crédito 6.0.2", page_icon=str(LOGO) if LOGO.exists() else "💳", layout="wide")
+# 6.0.6 — configuração comercial genérica.
+# Altere SOMENTE estes valores para cadastrar seus produtos no seu ambiente.
+PRODUCT_CONFIG = [
+    {"name": "Produto A", "unit_price": 0.0, "units_per_box": 9},
+    {"name": "Produto B", "unit_price": 0.0, "units_per_box": 9},
+    {"name": "Produto C", "unit_price": 0.0, "units_per_box": 9},
+]
+COMMERCIAL_TIERS = [
+    {"label": "Condição 1", "min_units": 1, "max_units": 18, "discount_pct": 0.0},
+    {"label": "Condição 2", "min_units": 19, "max_units": 34, "discount_pct": 0.0},
+    {"label": "Condição 3", "min_units": 35, "max_units": None, "discount_pct": 0.0},
+]
+
+st.set_page_config(page_title="Fratelli B2B Crédito 6.0.7", page_icon=str(LOGO) if LOGO.exists() else "💳", layout="wide")
 
 
 def money(v):
@@ -54,14 +68,14 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 st.sidebar.markdown(logo_html(), unsafe_allow_html=True)
-st.sidebar.markdown("# Fratelli 6.0.2")
+st.sidebar.markdown("# Fratelli 6.0.7")
 menu=st.sidebar.radio("Menu", ["Nova análise","Histórico","Auditoria","Metodologia"])
 
 c=db()
 
 if menu=="Nova análise":
-    st.title("Nova análise — 6.0.2")
-    st.caption("Motor B2B genérico de análise de crédito 6.0.2 — pesquisa pública, evidências, score, limite, caixas, unidades e simulação explicável.")
+    st.title("Nova análise — 6.0.7")
+    st.caption("Motor B2B genérico de análise de crédito 6.0.7 — pesquisa pública, evidências, score, limite, caixas, unidades, composição automática e simulação explicável.")
     cnpj=st.text_input("CNPJ", placeholder="00.000.000/0000-00")
     col1,col2=st.columns([1,1])
     with col1:
@@ -96,7 +110,44 @@ if menu=="Nova análise":
         st.metric("Confiança da pesquisa pública", f"{conf*100:.0f}%")
 
         st.subheader("Sócios / administradores")
-        names=st.text_area("Nomes encontrados ou informados (um por linha)", value="")
+        partners = d.get("partners", [])
+        if partners:
+            st.success(f"{len(partners)} sócio(s)/administrador(es) identificado(s) nas fontes públicas.")
+            st.dataframe(
+                pd.DataFrame([
+                    {
+                        "Nome": p.get("name"),
+                        "Qualificação": p.get("role", "Não identificada"),
+                        "Fonte(s)": "; ".join(d.get("partner_sources", {}).get(p.get("name"), [])),
+                    }
+                    for p in partners
+                ]),
+                use_container_width=True, hide_index=True
+            )
+        else:
+            st.warning("Nenhum sócio/administrador foi extraído automaticamente das fontes que responderam. Isso não significa ausência de sócios; significa apenas que o QSA não foi localizado/extraído nesta pesquisa.")
+
+        st.subheader("Pesquisa judicial — Jusbrasil")
+        st.caption("A pesquisa usa o CNPJ e os nomes identificados no QSA. O resultado é apresentado como evidência pública, sem concluir que uma ocorrência seja prejudicial sem analisar o processo, partes, assunto, situação e decisões.")
+        judicial = d.get("partner_judicial", [])
+        if judicial:
+            for r in judicial:
+                target = f"{r.get('target_type')}: {r.get('query')}"
+                with st.expander(target, expanded=True):
+                    if r.get("available_publicly"):
+                        st.write(f"**Jusbrasil:** acesso público respondeu (HTTP {r.get('status')}).")
+                        if r.get("snippet"):
+                            st.caption(r["snippet"][:2500])
+                    else:
+                        st.warning(r.get("note", "Fonte não disponível publicamente neste acesso."))
+                    if r.get("url"):
+                        st.markdown(f"[Abrir consulta no Jusbrasil]({r['url']})")
+        else:
+            st.info("Nenhuma consulta judicial foi gerada porque o QSA não foi identificado ou a análise ainda não foi executada.")
+
+        st.divider()
+        st.subheader("Pesquisa manual adicional de sócios / administradores")
+        names=st.text_area("Nome(s) adicional(is), um por linha", value="")
         if st.button("Pesquisar nomes publicamente"):
             people=[]
             for n in names.splitlines():
@@ -106,7 +157,7 @@ if menu=="Nova análise":
             with st.expander(p["name"]):
                 for r in p["results"]:
                     st.write(f"**{r['source']}** — {'OK' if r['ok'] else 'sem resposta'}")
-                    if r.get("url"): st.write(r["url"])
+                    if r.get("url"): st.markdown(f"[Abrir fonte]({r['url']})")
                     if r.get("snippet"): st.caption(r["snippet"][:1000])
                 st.caption("Resultados por nome são pistas públicas e exigem confirmação de identidade antes de atribuir qualquer ocorrência à pessoa.")
 
@@ -157,56 +208,179 @@ if menu=="Nova análise":
     s1.metric("Pedido simulado",money(sim)); s2.metric("Aprovável",money(simdec["approved"])); s3.metric("Excesso",money(max(0,sim-simdec["approved"])))
     st.write(f"**Resultado:** {simdec['status']} — {simdec['reason']}")
 
+    # 6.0.5 — status comercial explícito e solicitação de aprovação manual.
+    # Os contatos são configuráveis no código e os links somente preenchem
+    # email/WhatsApp; nenhum envio é realizado automaticamente.
+    APPROVER_NAME = "Paulo Garcia"
+    APPROVER_EMAIL = "teixeira1218@gmail.com"
+    APPROVER_WA = "5585985552343"
+
+    if sim > 0 and simdec["approved"] >= sim and simdec["status"] in ("APROVAR", "APROVAR COM LIMITE"):
+        st.success(f"### CRÉDITO APROVADO\n\nPedido de {money(sim)} está dentro do valor aprovado pela análise.")
+    else:
+        st.error("### CRÉDITO NÃO APROVADO AUTOMATICAMENTE\n\nEste pedido precisa de aprovação manual antes de ser liberado.")
+        reason = simdec.get("reason", "Pedido fora dos parâmetros automáticos")
+        excess_manual = max(0.0, sim - float(simdec.get("approved", 0) or 0))
+        company_name = fields.get("Razão social", "Empresa não identificada") if d else "Empresa não identificada"
+        cnpj_value = st.session_state.get("cnpj", clean_cnpj(cnpj))
+        email_subject = f"Solicitação de aprovação de crédito — {company_name} — {cnpj_value}"
+        email_body = (
+            f"Olá {APPROVER_NAME},\n\n"
+            f"Solicito aprovação manual de crédito para a empresa {company_name} (CNPJ {cnpj_value}).\n\n"
+            f"Score: {score:.1f}/100\n"
+            f"Risco: {risk}\n"
+            f"Cobertura: {coverage:.1f}%\n"
+            f"Limite pela política: {money(dec['ceiling'])}\n"
+            f"Valor aprovado automaticamente: {money(simdec.get('approved', 0))}\n"
+            f"Valor solicitado: {money(sim)}\n"
+            f"Excesso: {money(excess_manual)}\n"
+            f"Resultado: {simdec['status']}\n"
+            f"Motivo: {reason}\n\n"
+            "Favor analisar e informar a decisão manual.\n"
+        )
+        import urllib.parse
+        email_url = "mailto:" + APPROVER_EMAIL + "?" + urllib.parse.urlencode({"subject": email_subject, "body": email_body})
+        wa_text = (
+            f"Solicitação de aprovação de crédito\n"
+            f"Empresa: {company_name}\n"
+            f"CNPJ: {cnpj_value}\n"
+            f"Score: {score:.1f}/100\n"
+            f"Limite pela política: {money(dec['ceiling'])}\n"
+            f"Aprovado automaticamente: {money(simdec.get('approved', 0))}\n"
+            f"Solicitado: {money(sim)}\n"
+            f"Excesso: {money(excess_manual)}\n"
+            f"Motivo: {reason}\n\n"
+            "Favor analisar e autorizar ou recusar o crédito."
+        )
+        wa_url = "https://wa.me/" + APPROVER_WA + "?" + urllib.parse.urlencode({"text": wa_text})
+        b1, b2 = st.columns(2)
+        with b1:
+            st.link_button(f"✉️ Solicitar aprovação por e-mail — {APPROVER_NAME}", email_url, use_container_width=True)
+        with b2:
+            st.link_button(f"💬 Solicitar aprovação via WhatsApp — {APPROVER_NAME}", wa_url, use_container_width=True)
+        st.caption("Os botões abrem uma mensagem pré-preenchida. O envio depende da confirmação do usuário no aplicativo de e-mail/WhatsApp.")
+        if st.button("Registrar solicitação de aprovação manual", key="register_manual_approval", use_container_width=True):
+            audit(c, "SOLICITACAO_APROVACAO_MANUAL", cnpj_value, {
+                "approver": APPROVER_NAME, "email": APPROVER_EMAIL, "whatsapp": APPROVER_WA,
+                "score": score, "coverage": coverage, "policy_ceiling": dec["ceiling"],
+                "approved_automatically": simdec.get("approved", 0), "requested": sim,
+                "excess": excess_manual, "reason": reason
+            })
+            st.success("Solicitação de aprovação manual registrada na auditoria.")
+
     st.subheader("Simulador comercial — configuração genérica")
-    st.caption("6.0.2: converte o limite aprovado em caixas e unidades. Produtos e descontos são configuráveis e não fazem parte do motor de risco.")
+    st.caption("6.0.6: sugere automaticamente uma composição de produtos dentro do crédito efetivamente aprovado. A composição é apenas uma sugestão operacional; nunca ultrapassa o limite liberado.")
 
-    p1, p2, p3 = st.columns(3)
-    with p1:
-        product_name = st.text_input("Produto", value="Produto A", key="product_602")
-    with p2:
-        unit_price = float(st.number_input("Preço unitário (R$)", min_value=0.0, step=1.0, key="price_602"))
-    with p3:
-        units_per_box = int(st.number_input("Unidades por caixa", min_value=1, value=9, step=1, key="units_box_602"))
+    st.markdown("**Produtos cadastrados**")
+    pc1, pc2, pc3 = st.columns(3)
+    edited_products = []
+    for col, cfg, idx in zip((pc1, pc2, pc3), PRODUCT_CONFIG, range(3)):
+        with col:
+            name = st.text_input(f"Produto {chr(65+idx)}", value=cfg["name"], key=f"prod_name_606_{idx}")
+            price = float(st.number_input("Preço unitário (R$)", min_value=0.0, value=float(cfg["unit_price"]), step=1.0, key=f"prod_price_606_{idx}"))
+            units_box = int(st.number_input("Unidades por caixa", min_value=1, value=int(cfg["units_per_box"]), step=1, key=f"prod_box_606_{idx}"))
+            edited_products.append({"name": name, "unit_price": price, "units_per_box": units_box})
 
-    st.markdown("**Faixas de desconto**")
-    t1, t2, t3 = st.columns(3)
-    with t1:
-        min1 = int(st.number_input("Faixa 1 — a partir de (unid.)", min_value=0, value=1, step=1, key="min1_602"))
-        max1 = int(st.number_input("Faixa 1 — até (unid.)", min_value=0, value=18, step=1, key="max1_602"))
-        pct1 = float(st.number_input("Desconto faixa 1 (%)", min_value=0.0, max_value=100.0, step=1.0, key="pct1_602"))
-    with t2:
-        min2 = int(st.number_input("Faixa 2 — a partir de (unid.)", min_value=0, value=19, step=1, key="min2_602"))
-        max2 = int(st.number_input("Faixa 2 — até (unid.)", min_value=0, value=34, step=1, key="max2_602"))
-        pct2 = float(st.number_input("Desconto faixa 2 (%)", min_value=0.0, max_value=100.0, step=1.0, key="pct2_602"))
-    with t3:
-        min3 = int(st.number_input("Faixa 3 — a partir de (unid.)", min_value=0, value=35, step=1, key="min3_602"))
-        pct3 = float(st.number_input("Desconto faixa 3 (%)", min_value=0.0, max_value=100.0, step=1.0, key="pct3_602"))
+    st.markdown("**Condição comercial — selecione somente uma**")
+    tier_labels = [t["label"] for t in COMMERCIAL_TIERS]
+    selected_label = st.selectbox("Condição", tier_labels, index=0, key="tier_selected_606")
+    selected_tier = next(t for t in COMMERCIAL_TIERS if t["label"] == selected_label)
+    tc1, tc2, tc3 = st.columns(3)
+    with tc1:
+        tier_min = int(st.number_input("A partir de (unid.)", min_value=0, value=int(selected_tier["min_units"]), step=1, key="tier_min_606"))
+    with tc2:
+        max_default = int(selected_tier["max_units"] or 999999)
+        tier_max = int(st.number_input("Até (unid.) — 0 = sem limite", min_value=0, value=(0 if selected_tier["max_units"] is None else max_default), step=1, key="tier_max_606"))
+    with tc3:
+        tier_discount = float(st.number_input("Desconto (%)", min_value=0.0, max_value=100.0, value=float(selected_tier["discount_pct"]), step=1.0, key="tier_discount_606"))
+    active_tier = [{"min_units": tier_min, "max_units": (None if tier_max == 0 else tier_max), "discount_pct": tier_discount}]
 
-    tiers = [
-        {"min_units": min1, "max_units": max1, "discount_pct": pct1},
-        {"min_units": min2, "max_units": max2, "discount_pct": pct2},
-        {"min_units": min3, "max_units": None, "discount_pct": pct3},
-    ]
-    box_value = calculate_box_value(unit_price, units_per_box)
-    max_allowed = max_boxes_by_approved_limit(dec["approved"], unit_price, units_per_box, tiers)
+    # O teto abaixo é apenas informativo; a sugestão usa exclusivamente o valor efetivamente aprovado.
+    approved_limit = max(0.0, float(dec.get("approved", 0) or 0))
+    policy_limit = max(0.0, float(dec.get("ceiling", 0) or 0))
 
     st.markdown("**Limite convertido em quantidade**")
-    q1, q2, q3, q4 = st.columns(4)
-    q1.metric("Limite aprovado", money(dec["approved"]))
-    q2.metric("Valor da caixa", money(box_value))
-    q3.metric("Máximo de caixas", f"{max_allowed['boxes']} caixas")
-    q4.metric("Máximo de unidades", f"{max_allowed['units']} unidades")
+    q1, q2, q3 = st.columns(3)
+    q1.metric("Crédito efetivamente liberado", money(approved_limit))
+    q2.metric("Teto pela política", money(policy_limit))
+    q3.metric("Produtos disponíveis", str(sum(1 for x in edited_products if x["unit_price"] > 0)))
 
-    st.caption(
-        f"{product_name}: {units_per_box} unidade(s) por caixa. "
-        "O cálculo considera caixas inteiras e nunca ultrapassa o limite aprovado."
-    )
+    def suggest_mix(products, limit, tier, seed=None):
+        """Gera uma composição aleatória, porém sempre limitada ao crédito aprovado."""
+        valid = [x for x in products if x["unit_price"] > 0 and x["units_per_box"] > 0]
+        if limit <= 0 or not valid:
+            return []
+        rng = random.Random(seed)
+        rng.shuffle(valid)
+        # Tenta 1, 2 ou 3 produtos, priorizando diversidade sem ultrapassar o limite.
+        count = rng.randint(1, min(3, len(valid)))
+        chosen = valid[:count]
+        boxes = {x["name"]: 0 for x in chosen}
+        # Primeiro distribui uma caixa para cada produto quando couber.
+        for x in chosen:
+            sim = simulate_order(x["unit_price"], 1, x["units_per_box"], tier)
+            if sim["net"] <= limit - sum(simulate_order(y["unit_price"], boxes[y["name"]], y["units_per_box"], tier)["net"] for y in chosen):
+                boxes[x["name"]] = 1
+        # Depois preenche aleatoriamente até não caber mais uma caixa.
+        changed = True
+        while changed:
+            changed = False
+            order = list(chosen)
+            rng.shuffle(order)
+            for x in order:
+                current = boxes[x["name"]]
+                trial = dict(boxes); trial[x["name"]] = current + 1
+                total = 0.0
+                for y in chosen:
+                    total += simulate_order(y["unit_price"], trial[y["name"]], y["units_per_box"], tier)["net"]
+                if total <= limit + 1e-9:
+                    boxes = trial
+                    changed = True
+        result=[]; total=0.0
+        for x in chosen:
+            b=boxes[x["name"]]
+            if b:
+                sim=simulate_order(x["unit_price"], b, x["units_per_box"], tier)
+                total += sim["net"]
+                result.append({**x, **sim})
+        return result
 
-    st.markdown("**Simular pedido por caixas**")
-    requested_boxes = int(st.number_input("Quantidade de caixas solicitada", min_value=0, step=1, key="boxes_602"))
-    order = simulate_order(unit_price, requested_boxes, units_per_box, tiers)
-    excess = round(max(0.0, order["net"] - dec["approved"]), 2)
-    accepted = excess <= 0 and dec["approved"] > 0 and requested_boxes > 0
+    if "mix_seed_606" not in st.session_state:
+        st.session_state["mix_seed_606"] = random.randrange(1, 10**9)
+    if st.button("🎲 Gerar sugestão automática", type="primary", use_container_width=True, key="generate_mix_606"):
+        st.session_state["mix_seed_606"] = random.randrange(1, 10**9)
+
+    mix = suggest_mix(edited_products, approved_limit, active_tier, st.session_state["mix_seed_606"])
+    if approved_limit <= 0:
+        st.warning("Não há crédito efetivamente liberado para gerar uma composição. O teto pela política não é tratado como autorização.")
+    elif not mix:
+        st.warning("Não foi possível gerar uma composição com os produtos/preços configurados dentro do crédito liberado.")
+    else:
+        rows=[]; total=0.0
+        for x in mix:
+            total += x["net"]
+            rows.append({"Produto":x["name"], "Caixas":x["boxes"], "Unidades":x["units"], "Valor bruto":money(x["gross"]), "Desconto":money(x["discount"]), "Valor líquido":money(x["net"])})
+        st.markdown("### Sugestão de composição")
+        st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+        st.success(f"Total sugerido: {money(total)} · Saldo do crédito: {money(max(0, approved_limit-total))}")
+        st.caption("A composição é recalculada ao solicitar nova sugestão e nunca ultrapassa o crédito efetivamente liberado.")
+
+    st.markdown("**Simulação manual por caixas**")
+    st.caption("O cálculo é feito imediatamente a partir do produto, preço, unidades por caixa, condição selecionada e quantidade de caixas. O cálculo do pedido funciona mesmo quando o crédito aprovado é R$ 0; nesse caso, a comparação apenas informa que o pedido não está autorizado.")
+    product_options = [x["name"] for x in edited_products]
+    selected_product = st.selectbox("Produto", product_options, key="manual_product_607")
+    selected_cfg = next(x for x in edited_products if x["name"] == selected_product)
+    mc1, mc2, mc3 = st.columns(3)
+    with mc1:
+        requested_boxes = int(st.number_input("Quantidade de caixas", min_value=0, value=1, step=1, key="boxes_607"))
+    with mc2:
+        st.metric("Preço unitário", money(selected_cfg["unit_price"]))
+    with mc3:
+        st.metric("Valor de 1 caixa", money(calculate_box_value(selected_cfg["unit_price"], selected_cfg["units_per_box"])))
+
+    order = simulate_order(selected_cfg["unit_price"], requested_boxes, selected_cfg["units_per_box"], active_tier)
+    excess = round(max(0.0, order["net"] - approved_limit), 2)
+    accepted = requested_boxes > 0 and approved_limit > 0 and order["net"] <= approved_limit + 1e-9
     r1, r2, r3, r4, r5 = st.columns(5)
     r1.metric("Caixas", str(order["boxes"]))
     r2.metric("Unidades", str(order["units"]))
@@ -215,15 +389,15 @@ if menu=="Nova análise":
     r5.metric("Valor líquido", money(order["net"]))
 
     if requested_boxes == 0:
-        st.info("Informe a quantidade de caixas para simular o pedido.")
+        st.info("Informe pelo menos 1 caixa para simular o pedido.")
+    elif selected_cfg["unit_price"] <= 0:
+        st.error("Configure um preço unitário maior que R$ 0,00 para este produto.")
     elif accepted:
-        st.success(f"Pedido dentro do limite aprovado: {money(order['net'])}.")
+        st.success(f"Pedido dentro do crédito efetivamente liberado: {money(order['net'])}. Saldo: {money(approved_limit - order['net'])}.")
+    elif approved_limit <= 0:
+        st.error(f"Pedido calculado: {money(order['net'])}. Não há crédito efetivamente liberado para autorizar este pedido.")
     else:
-        st.warning(
-            f"Pedido excede o limite aprovado em {money(excess)}. "
-            f"Máximo calculado: {max_allowed['boxes']} caixa(s) / {max_allowed['units']} unidade(s)."
-        )
-
+        st.warning(f"Pedido calculado: {money(order['net'])}. Excede o crédito efetivamente liberado em {money(excess)}.")
     st.subheader("Fontes consultadas")
     if d:
         rows=[]
