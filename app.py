@@ -21,9 +21,9 @@ LOGO=APP_DIR/"assets"/"fratelli_logo.png"
 # 6.0.6 — configuração comercial genérica.
 # Altere SOMENTE estes valores para cadastrar seus produtos no seu ambiente.
 PRODUCT_CONFIG = [
-    {"name": "Produto A", "unit_price": 0.0, "units_per_box": 9},
-    {"name": "Produto B", "unit_price": 0.0, "units_per_box": 9},
-    {"name": "Produto C", "unit_price": 0.0, "units_per_box": 9},
+    {"name": "Fratelli Montanhas", "unit_price": 0.0, "units_per_box": 9},
+    {"name": "Fratelli Desertos", "unit_price": 0.0, "units_per_box": 9},
+    {"name": "Fratelli Cânions", "unit_price": 0.0, "units_per_box": 9},
 ]
 COMMERCIAL_TIERS = [
     {"label": "Condição 1", "min_units": 1, "max_units": 18, "discount_pct": 0.0},
