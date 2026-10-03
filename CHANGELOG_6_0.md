@@ -15,3 +15,12 @@
 - Corrigido o import de `engine` em `public_research.py` para funcionar quando o Streamlit executa `app.py` como módulo principal.
 - Mantido fallback relativo para execução como pacote.
 - Removidos caches de teste e arquivos temporários do pacote de publicação.
+
+
+## 6.0.2
+- Novo módulo genérico de quantidade aprovada: caixas e unidades.
+- Novo simulador comercial parametrizável.
+- Descontos por faixas de quantidade configuráveis.
+- Cálculo de valor bruto, desconto, valor líquido e excedente.
+- Máximo de caixas calculado sem ultrapassar o limite aprovado.
+- Motor de crédito permanece separado das condições comerciais.

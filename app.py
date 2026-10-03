@@ -6,14 +6,18 @@ from datetime import datetime
 from pathlib import Path
 import pandas as pd
 import streamlit as st
-from engine import WEIGHTS, clean_cnpj, validate_cnpj, score_from_evidence, risk_band, decision, public_confidence
+from engine import (
+    WEIGHTS, clean_cnpj, validate_cnpj, score_from_evidence, risk_band, decision,
+    public_confidence, calculate_box_value, discount_for_quantity,
+    simulate_order, max_boxes_by_approved_limit
+)
 from public_research import research_company, search_person
 
 APP_DIR=Path(__file__).parent
 DB=APP_DIR/"fratelli.db"
 LOGO=APP_DIR/"assets"/"fratelli_logo.png"
 
-st.set_page_config(page_title="Fratelli", page_icon=str(LOGO) if LOGO.exists() else "💳", layout="wide")
+st.set_page_config(page_title="Fratelli B2B Crédito 6.0.2", page_icon=str(LOGO) if LOGO.exists() else "💳", layout="wide")
 
 
 def money(v):
@@ -50,14 +54,14 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 st.sidebar.markdown(logo_html(), unsafe_allow_html=True)
-st.sidebar.markdown("# Fratelli")
+st.sidebar.markdown("# Fratelli 6.0.2")
 menu=st.sidebar.radio("Menu", ["Nova análise","Histórico","Auditoria","Metodologia"])
 
 c=db()
 
 if menu=="Nova análise":
-    st.title("Nova análise")
-    st.caption("Motor B2B genérico de análise de crédito — pesquisa pública, evidências, score, limite e decisão explicável.")
+    st.title("Nova análise — 6.0.2")
+    st.caption("Motor B2B genérico de análise de crédito 6.0.2 — pesquisa pública, evidências, score, limite, caixas, unidades e simulação explicável.")
     cnpj=st.text_input("CNPJ", placeholder="00.000.000/0000-00")
     col1,col2=st.columns([1,1])
     with col1:
@@ -152,6 +156,73 @@ if menu=="Nova análise":
     s1,s2,s3=st.columns(3)
     s1.metric("Pedido simulado",money(sim)); s2.metric("Aprovável",money(simdec["approved"])); s3.metric("Excesso",money(max(0,sim-simdec["approved"])))
     st.write(f"**Resultado:** {simdec['status']} — {simdec['reason']}")
+
+    st.subheader("Simulador comercial — configuração genérica")
+    st.caption("6.0.2: converte o limite aprovado em caixas e unidades. Produtos e descontos são configuráveis e não fazem parte do motor de risco.")
+
+    p1, p2, p3 = st.columns(3)
+    with p1:
+        product_name = st.text_input("Produto", value="Produto A", key="product_602")
+    with p2:
+        unit_price = float(st.number_input("Preço unitário (R$)", min_value=0.0, step=1.0, key="price_602"))
+    with p3:
+        units_per_box = int(st.number_input("Unidades por caixa", min_value=1, value=9, step=1, key="units_box_602"))
+
+    st.markdown("**Faixas de desconto**")
+    t1, t2, t3 = st.columns(3)
+    with t1:
+        min1 = int(st.number_input("Faixa 1 — a partir de (unid.)", min_value=0, value=1, step=1, key="min1_602"))
+        max1 = int(st.number_input("Faixa 1 — até (unid.)", min_value=0, value=18, step=1, key="max1_602"))
+        pct1 = float(st.number_input("Desconto faixa 1 (%)", min_value=0.0, max_value=100.0, step=1.0, key="pct1_602"))
+    with t2:
+        min2 = int(st.number_input("Faixa 2 — a partir de (unid.)", min_value=0, value=19, step=1, key="min2_602"))
+        max2 = int(st.number_input("Faixa 2 — até (unid.)", min_value=0, value=34, step=1, key="max2_602"))
+        pct2 = float(st.number_input("Desconto faixa 2 (%)", min_value=0.0, max_value=100.0, step=1.0, key="pct2_602"))
+    with t3:
+        min3 = int(st.number_input("Faixa 3 — a partir de (unid.)", min_value=0, value=35, step=1, key="min3_602"))
+        pct3 = float(st.number_input("Desconto faixa 3 (%)", min_value=0.0, max_value=100.0, step=1.0, key="pct3_602"))
+
+    tiers = [
+        {"min_units": min1, "max_units": max1, "discount_pct": pct1},
+        {"min_units": min2, "max_units": max2, "discount_pct": pct2},
+        {"min_units": min3, "max_units": None, "discount_pct": pct3},
+    ]
+    box_value = calculate_box_value(unit_price, units_per_box)
+    max_allowed = max_boxes_by_approved_limit(dec["approved"], unit_price, units_per_box, tiers)
+
+    st.markdown("**Limite convertido em quantidade**")
+    q1, q2, q3, q4 = st.columns(4)
+    q1.metric("Limite aprovado", money(dec["approved"]))
+    q2.metric("Valor da caixa", money(box_value))
+    q3.metric("Máximo de caixas", f"{max_allowed['boxes']} caixas")
+    q4.metric("Máximo de unidades", f"{max_allowed['units']} unidades")
+
+    st.caption(
+        f"{product_name}: {units_per_box} unidade(s) por caixa. "
+        "O cálculo considera caixas inteiras e nunca ultrapassa o limite aprovado."
+    )
+
+    st.markdown("**Simular pedido por caixas**")
+    requested_boxes = int(st.number_input("Quantidade de caixas solicitada", min_value=0, step=1, key="boxes_602"))
+    order = simulate_order(unit_price, requested_boxes, units_per_box, tiers)
+    excess = round(max(0.0, order["net"] - dec["approved"]), 2)
+    accepted = excess <= 0 and dec["approved"] > 0 and requested_boxes > 0
+    r1, r2, r3, r4, r5 = st.columns(5)
+    r1.metric("Caixas", str(order["boxes"]))
+    r2.metric("Unidades", str(order["units"]))
+    r3.metric("Valor bruto", money(order["gross"]))
+    r4.metric(f"Desconto ({order['discount_pct']:.1f}%)", money(order["discount"]))
+    r5.metric("Valor líquido", money(order["net"]))
+
+    if requested_boxes == 0:
+        st.info("Informe a quantidade de caixas para simular o pedido.")
+    elif accepted:
+        st.success(f"Pedido dentro do limite aprovado: {money(order['net'])}.")
+    else:
+        st.warning(
+            f"Pedido excede o limite aprovado em {money(excess)}. "
+            f"Máximo calculado: {max_allowed['boxes']} caixa(s) / {max_allowed['units']} unidade(s)."
+        )
 
     st.subheader("Fontes consultadas")
     if d:

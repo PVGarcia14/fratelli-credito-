@@ -1,4 +1,7 @@
-from engine import validate_cnpj, score_from_evidence, policy_ceiling, decision, risk_band
+from engine import (
+    validate_cnpj, score_from_evidence, policy_ceiling, decision, risk_band,
+    calculate_box_value, simulate_order, max_boxes_by_approved_limit
+)
 
 def test_cnpj_valid():
     ok,msg=validate_cnpj('39.284.044/0001-26')
@@ -36,3 +39,29 @@ def test_risk():
     assert risk_band(24.9)=='MUITO ELEVADO'
     assert risk_band(70)=='CONTROLADO'
     assert risk_band(70.1)=='BAIXO'
+
+
+def test_box_value_and_quantity():
+    assert calculate_box_value(100, 9) == 900
+    q = __import__('engine').quantity_within_limit(2000, 900, 9)
+    assert q["boxes"] == 2
+    assert q["units"] == 18
+    assert q["gross"] == 1800
+
+
+def test_discount_and_order():
+    tiers = [
+        {"min_units": 1, "max_units": 18, "discount_pct": 10},
+        {"min_units": 19, "max_units": 34, "discount_pct": 20},
+        {"min_units": 35, "max_units": None, "discount_pct": 30},
+    ]
+    sim = simulate_order(100, 2, 9, tiers)
+    assert sim["units"] == 18
+    assert sim["discount_pct"] == 10
+    assert sim["net"] == 1620
+
+
+def test_max_boxes_respects_net_limit():
+    tiers = [{"min_units": 35, "max_units": None, "discount_pct": 30}]
+    result = max_boxes_by_approved_limit(3500, 500, 9, tiers)
+    assert result["net"] <= 3500

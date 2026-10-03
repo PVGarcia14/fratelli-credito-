@@ -3,6 +3,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 import re
+import math
 
 WEIGHTS = {
     "Cadastro e estabilidade": 15,
@@ -137,3 +138,77 @@ def parse_public_page(text: str) -> Dict[str, Any]:
         "Telefone": first_match(text, [r"Telefone\s*[:|]?\s*(\(?\d{2}\)?\s*[0-9\- ]{7,20})"]),
     }
     return {k:v for k,v in fields.items() if v}
+
+
+# --- 6.0.2: commercial simulation (generic B2B, product-agnostic) ---
+DEFAULT_BOX_UNITS = 9
+
+def calculate_box_value(unit_price: float, units_per_box: int = DEFAULT_BOX_UNITS) -> float:
+    """Return the gross value of one box for a configurable product."""
+    unit_price = max(0.0, float(unit_price or 0))
+    units_per_box = max(1, int(units_per_box or 1))
+    return round(unit_price * units_per_box, 2)
+
+
+def quantity_within_limit(limit: float, box_value: float, units_per_box: int = DEFAULT_BOX_UNITS) -> Dict[str, Any]:
+    """Calculate the maximum whole boxes and units that fit without exceeding a limit."""
+    limit = max(0.0, float(limit or 0))
+    box_value = max(0.0, float(box_value or 0))
+    units_per_box = max(1, int(units_per_box or 1))
+    if box_value <= 0:
+        return {"boxes": 0, "units": 0, "gross": 0.0, "remainder": limit}
+    boxes = int(math.floor((limit + 1e-9) / box_value))
+    gross = round(boxes * box_value, 2)
+    return {"boxes": boxes, "units": boxes * units_per_box, "gross": gross,
+            "remainder": round(max(0.0, limit - gross), 2)}
+
+
+def discount_for_quantity(units: int, tiers: List[Dict[str, Any]]) -> float:
+    """Return the configured discount percentage for a quantity of units."""
+    units = max(0, int(units or 0))
+    selected = 0.0
+    for tier in tiers or []:
+        min_units = max(0, int(tier.get("min_units", 0)))
+        max_units = tier.get("max_units")
+        pct = max(0.0, min(100.0, float(tier.get("discount_pct", 0) or 0)))
+        if units >= min_units and (max_units is None or units <= int(max_units)):
+            selected = max(selected, pct)
+    return selected
+
+
+def simulate_order(unit_price: float, boxes: int, units_per_box: int = DEFAULT_BOX_UNITS,
+                   tiers: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
+    """Simulate a generic B2B order using configurable box size and discount tiers."""
+    unit_price = max(0.0, float(unit_price or 0))
+    boxes = max(0, int(boxes or 0))
+    units_per_box = max(1, int(units_per_box or 1))
+    units = boxes * units_per_box
+    gross = round(units * unit_price, 2)
+    discount_pct = discount_for_quantity(units, tiers or [])
+    discount = round(gross * discount_pct / 100.0, 2)
+    net = round(gross - discount, 2)
+    return {
+        "boxes": boxes, "units": units, "unit_price": unit_price,
+        "box_value": calculate_box_value(unit_price, units_per_box),
+        "gross": gross, "discount_pct": discount_pct,
+        "discount": discount, "net": net
+    }
+
+
+def max_boxes_by_approved_limit(approved_limit: float, unit_price: float,
+                                units_per_box: int = DEFAULT_BOX_UNITS,
+                                tiers: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
+    """Find the largest whole-box order whose net value does not exceed the approved limit."""
+    approved_limit = max(0.0, float(approved_limit or 0))
+    unit_price = max(0.0, float(unit_price or 0))
+    units_per_box = max(1, int(units_per_box or 1))
+    if unit_price <= 0:
+        return {"boxes": 0, "units": 0, "gross": 0.0, "discount": 0.0, "net": 0.0}
+    # A safe finite upper bound comes from the no-discount value.
+    upper = int(math.floor(approved_limit / calculate_box_value(unit_price, units_per_box))) + 1
+    best = {"boxes": 0, "units": 0, "gross": 0.0, "discount": 0.0, "net": 0.0}
+    for boxes in range(1, max(0, upper) + 1):
+        sim = simulate_order(unit_price, boxes, units_per_box, tiers)
+        if sim["net"] <= approved_limit + 1e-9:
+            best = sim
+    return best
